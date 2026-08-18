@@ -16,7 +16,7 @@ JavaScript (Node.js runtime). No TypeScript unless explicitly requested.
 - Use Node.js standard library (`https`, `fs`, `path`, `os`, `child_process`) whenever possible.
 - Do not add external dependencies without explicit approval.
 - Current runtime dependencies: none.
-- Current dev dependencies: `@types/vscode`, `@types/mocha`, `@types/node`, `eslint`, `@vscode/test-cli`, `@vscode/test-electron`.
+- Current dev dependencies: `@types/vscode`, `@types/mocha`, `@types/node`, `eslint`, `mocha`, `@vscode/test-cli`, `@vscode/test-electron`.
 
 ## VS Code Extension
 - Target engine: `^1.97.0`
@@ -29,4 +29,5 @@ JavaScript (Node.js runtime). No TypeScript unless explicitly requested.
 
 ## OS Assumptions
 - Linux primary target
+- External system tools required: `tar` (for extraction), `pkill` (for restart)
 - Assumes `curl` and `tar` available in PATH on the host system

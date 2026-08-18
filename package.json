@@ -1,6 +1,7 @@
 {
   "name": "vscode-updater",
   "displayName": "VSCode Updater",
+  "icon": "icon.png",
   "publisher": "RandallFlagg",
   "repository": {
     "type": "git",
@@ -11,7 +12,7 @@
   },
   "homepage": "https://github.com/RandallFlagg/vscode-updater",
   "description": "Automatically update VS Code on Linux",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "engines": {
     "vscode": "^1.97.0",
     "linux": "*"
@@ -23,12 +24,7 @@
     "onStartupFinished"
   ],
   "main": "./extension.js",
-  "files": [
-    "extension.js",
-    "package.json",
-    "README.md",
-    "STACK.md"
-  ],
+  "license": "MIT",
   "contributes": {
     "commands": [
       {
@@ -64,13 +60,20 @@
         },
         "vscode-updater.channel": {
           "type": "string",
-          "enum": ["stable", "insider", "beta"],
+          "enum": [
+            "stable",
+            "insider"
+          ],
           "default": "stable",
           "description": "VS Code release channel to check and download."
         },
         "vscode-updater.flavour": {
           "type": "string",
-          "enum": ["vscode", "codium", "other"],
+          "enum": [
+            "vscode",
+            "codium",
+            "other"
+          ],
           "default": "vscode",
           "description": "VS Code flavour. Use 'other' to provide custom update and test URLs."
         },
@@ -99,12 +102,12 @@
     "test:integration": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.97.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
-    "eslint": "^9.21.0",
-    "mocha": "^10.0.0",
+    "@types/vscode": "^1.97.0",
     "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1"
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.21.0",
+    "mocha": "^10.0.0"
   }
 }

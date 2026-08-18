@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+LINT=false
+TEST=false
+PACKAGE=false
+PUBLISH=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --lint)
+            LINT=true
+            shift
+            ;;
+        --test)
+            TEST=true
+            shift
+            ;;
+        --package)
+            PACKAGE=true
+            shift
+            ;;
+        --publish)
+            PUBLISH=true
+            shift
+            ;;
+        *)
+            echo "Unknown flag: $1"
+            echo "Usage: $0 [--lint] [--test] [--package] [--publish]"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$LINT" == "false" && "$TEST" == "false" && "$PACKAGE" == "false" && "$PUBLISH" == "false" ]]; then
+    LINT=true
+    TEST=true
+    PACKAGE=true
+    PUBLISH=true
+fi
+
+if [[ "$LINT" == "true" ]]; then
+    echo "Running lint..."
+    pnpm run lint
+fi
+
+if [[ "$TEST" == "true" ]]; then
+    echo "Running tests..."
+    pnpm test
+fi
+
+if [[ "$PACKAGE" == "true" ]]; then
+    echo "Packaging extension..."
+    env NODE_PATH=./node_modules npx @vscode/vsce package
+fi
+
+if [[ "$PUBLISH" == "true" ]]; then
+    echo "Publishing extension..."
+    npx @vscode/vsce publish
+fi
+
+echo "Done."

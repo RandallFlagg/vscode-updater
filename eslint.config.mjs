@@ -16,6 +16,9 @@ export default [{
             test: "readonly",
             describe: "readonly",
             it: "readonly",
+            beforeEach: "readonly",
+            afterEach: "readonly",
+            clearTimeout: "readonly",
             vscode: "readonly",
         },
 
