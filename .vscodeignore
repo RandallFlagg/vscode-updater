@@ -15,6 +15,6 @@ QA_REPORT.md
 REVIEW.md
 STACK.md
 pnpm-lock.yaml
-build.sh
+publish
 icon.svg
 MISC/
