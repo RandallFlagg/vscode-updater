@@ -6,6 +6,74 @@ All notable changes to the "vscode-updater" extension will be documented in this
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 -->
 
+## [1.3.11] - 2026-08-16
+
+### Added
+- `vscode-updater.tarTimeout` setting (default: 600000 ms = 10 min) to configure tar extraction timeout
+- `vscode-updater.mvTimeout` setting (default: 600000 ms = 10 min) to configure mv operation timeout
+
+### Changed
+- `trace` log level now writes to VS Code Output panel only, no longer calls `console.trace()` to reduce CPU overhead
+- `checkInterval` module variable now tracks the active timeout in the recursive `scheduleNextCheck()` chain, fixing timer leakage on extension reload
+- Removed Windows branch from `restartVSCode()` — extension is Linux-only
+- `showUpdateNotification()` now routes through `vscode-updater.update` command instead of calling `performUpdate()` directly, ensuring the `isUpdating` guard is respected
+
+### Fixed
+- Implemented missing `vscode-updater.autoBackup` setting — `performUpdate()` now conditionally skips backup when set to `false`
+- Removed duplicate `Temp directory created` log line in `performUpdate()`
+- Added `AGENT_OUTPUT/` to `.vscodeignore` to prevent agent artifacts from being packaged
+- Added 10-minute `timeout` to all `execFile` calls (`tar`, `mv`) to prevent indefinite hangs on stalled filesystems
+- Initial `checkForUpdates()` failure now resets `updateAvailable`, `latestVersion`, and `lastNotifiedVersion` to prevent stale state
+
+## [1.3.10] - 2026-08-15
+
+### Fixed
+- Excluded debug log files from VSIX package via `.vscodeignore`
+
+## [1.3.9] - 2026-08-14
+
+### Fixed
+- Replaced `setInterval` with self-rescheduling `setTimeout` to prevent stacked periodic checks when the extension is reloaded in dev mode
+- Added `isChecking` guard to `checkForUpdates()` to prevent concurrent checks from overlapping
+
+## [1.3.8] - 2026-08-14
+
+### Changed
+- Clarified `vscode-updater.logLevel` description to document verbosity hierarchy: `info` (least) < `debug` < `trace` (most)
+
+## [1.3.7] - 2026-08-14
+
+### Changed
+- Replaced `fs.promises.rename` with system `mv` for install path replacement. `mv` handles both atomic same-filesystem renames and cross-device fallbacks internally, removing the need for EXDEV error handling code.
+
+## [1.3.6] - 2026-08-14
+
+### Fixed
+- Replaced `fs.promises.cp` EXDEV fallback with system `cp -a` to avoid empty file corruption on large files like `node_modules.asar`
+- Added source-side asar size logging to distinguish extraction issues from copy issues
+
+## [1.3.5] - 2026-08-14
+
+### Fixed
+- Fixed interval stacking bug where `activate()` created a new `setInterval` without clearing the previous one, causing repeated update checks when the extension was reloaded
+- Changed `checkForUpdates() starting` log from `debug` to `trace` to reduce output panel noise at the default `debug` level
+
+## [1.3.4] - 2026-08-14
+
+### Added
+- `vscode-updater.tempDir` setting to choose where temporary files are downloaded and extracted (default: system temp). Useful for debugging cross-device issues by placing temp dir on the same filesystem as the install path.
+
+## [1.3.3] - 2026-08-14
+
+### Added
+- Verbose logging to VS Code Output panel with configurable `vscode-updater.logLevel` setting (default: `info`, options: `info`, `debug`, `trace`)
+- Detailed step-by-step logs for every update operation including download, extraction, rename, copy fallback, asar validation, and cleanup
+
+## [1.3.2] - 2026-08-14
+
+### Fixed
+- `fs.cp` callback error in cross-device fallback by using `fs.promises.cp`
+
 ## [1.3.1] - 2026-08-14
 
 ### Fixed
@@ -15,18 +83,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Changed
 - Replaced file-by-file copy with folder rename approach (`installPath` → `installPath.OLD`, extracted folder moved into place) for faster, more reliable updates
-- Progress reporting now uses both notification popup AND status bar during update
-- Downloaded tarballs cached locally to speed up repeated testing
 - Cache operations use `rename` instead of `copyFile` to reduce disk I/O
 - Cached downloads extracted directly from cache path, eliminating unnecessary temp copy
 
 ### Added
 - `debug.deleteDownloadedArchive` setting — preserves downloaded `.tar.gz` for debugging when set to `false`
 - `debug.keepFailedFolder` setting — keeps failed update folder as `.BAD` instead of restoring backup
-
-### Fixed
-- Error handling now safely extracts error messages and logs full errors to console for debugging
-- `validateInstallPath()` now allows custom paths under `/home` instead of blocking the entire prefix
 
 ## [1.2.0] - 2026-08-14
 

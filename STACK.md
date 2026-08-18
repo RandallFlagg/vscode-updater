@@ -34,5 +34,5 @@ JavaScript (Node.js runtime). No TypeScript unless explicitly requested.
 
 ## OS Assumptions
 - Linux primary target
-- External system tools required: `tar` (for extraction), `pkill` (for restart)
+- External system tools required: `tar` (for extraction)
 - Assumes `curl` and `tar` available in PATH on the host system

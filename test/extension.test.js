@@ -472,13 +472,23 @@ describe('showUpdateNotification', () => {
         const originalShowInformationMessage = vscode.window.showInformationMessage;
         vscode.window.showInformationMessage = (msg) => {
             capturedMessage = msg;
-            return { then: (cb) => cb('Later') };
+            return { then: (cb) => cb('Update Now') };
+        };
+
+        const originalExecuteCommand = vscode.commands.executeCommand;
+        let executedCommand = null;
+        vscode.commands.executeCommand = (cmd) => {
+            executedCommand = cmd;
+            return Promise.resolve();
         };
 
         extension.showUpdateNotification('1.85.0');
 
         assert.strictEqual(capturedMessage, 'VS Code 1.85.0 is available. Would you like to update now?');
+        assert.strictEqual(executedCommand, 'vscode-updater.update');
+
         vscode.window.showInformationMessage = originalShowInformationMessage;
+        vscode.commands.executeCommand = originalExecuteCommand;
     });
 });
 

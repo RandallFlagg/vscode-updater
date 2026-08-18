@@ -12,11 +12,13 @@ On Linux, VS Code's built-in update button opens a browser and sends you through
 
 ## Limitations
 
-This extension **cannot** intercept or replace VS Code's built-in "Update Available" notification, and it **cannot** place a button next to VS Code's native update button. That flow is controlled entirely by VS Code and is not exposed to extensions. Instead, this extension provides its own update mechanism via **three** surfaces:
+1. This extension **cannot** intercept or replace VS Code's built-in "Update Available" notification, and it **cannot** place a button next to VS Code's native update button. That flow is controlled entirely by VS Code and is not exposed to extensions. Instead, this extension provides its own update mechanism via **three** surfaces:
 
-1. **Status bar item** — a persistent icon in the bottom-right corner indicating update status
-2. **Notification** — a popup when an update is detected, with action buttons
-3. **Command palette** — commands available via `Ctrl+Shift+P` / `Cmd+Shift+P`
+  1. **Status bar item** — a persistent icon in the bottom-right corner indicating update status
+  2. **Notification** — a popup when an update is detected, with action buttons
+  3. **Command palette** — commands available via `Ctrl+Shift+P` / `Cmd+Shift+P`
+
+2. A VS Code extension ***cannot*** cleanly close the host application process and autonomously relaunch a fresh operating system-level process on its own. Because of security sandbox restrictions, a running process cannot spawn a new instance of itself and then terminate safely without losing its context or hitting permission barriers.
 
 ## How It Works
 
@@ -28,7 +30,7 @@ This extension **cannot** intercept or replace VS Code's built-in "Update Availa
 4. A backup of the current installation is created
 5. The new version is extracted to the same directory
 6. After extraction succeeds, the old installation is removed
-7. Extension prompts with **Restart Now** → VS Code closes and reopens with the updated version (or use the Restart VSCode command)
+7. Extension prompts with **Restart Now** → The user closes VS Code and reopens with the updated version
 
 ## Extension Settings
 
@@ -43,7 +45,11 @@ This extension contributes the following settings:
 * `vscode-updater.customReleasesUrl`: Full URL for releases list when flavour is `other`. Example: `https://update.example.com/api/releases/stable`
 * `vscode-updater.customBinaryName`: Binary name to restart when flavour is `other`. Leave empty to use `code`.
 * `vscode-updater.debug.deleteDownloadedArchive`: Delete the downloaded archive after updating (default: `true`). Set to `false` to keep the archive for debugging.
-* `vscode-updater.debug.keepFailedFolder`: When update fails, keep the new folder with a `.BAD` suffix instead of restoring from backup (default: `false`). Useful for debugging failed updates.
+ * `vscode-updater.debug.keepFailedFolder`: When update fails, keep the new folder with a `.BAD` suffix instead of restoring from backup (default: `false`). Useful for debugging failed updates.
+ * `vscode-updater.logLevel`: Verbosity level for the extension log in the Output panel. Options: `info` (default), `debug`, `trace`. Use `trace` for step-by-step troubleshooting.
+ * `vscode-updater.tempDir`: Custom directory for temporary extraction and downloads. Leave empty to use the system temp directory. Use this to avoid cross-device issues.
+ * `vscode-updater.tarTimeout`: Timeout in milliseconds for tar extraction (default: 600000 = 10 minutes). Increase for very slow network filesystems or large archives.
+ * `vscode-updater.mvTimeout`: Timeout in milliseconds for mv operations during installation replacement (default: 600000 = 10 minutes). Increase for cross-device moves on slow storage.
 
 ## Commands
 
@@ -64,6 +70,14 @@ Use **pnpm** for all package management. Standard commands:
 - `pnpm run lint` — run ESLint
 - `pnpm test` — run unit tests
 - `pnpm run test:integration` — run full VS Code integration tests
+
+### Update Rule
+
+When the user says "update all":
+1. Bump the version in `package.json`
+2. Update `CHANGELOG.md` with all changes for the new version
+3. Run `./publish --lint --test --package` (without `--publish`)
+4. Commit with a proper message - Never Push
 
 Use the `publish` script for the release pipeline:
 - `./publish` — runs lint, test, package, and publish in sequence (stops on first failure)

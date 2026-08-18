@@ -18,3 +18,8 @@ pnpm-lock.yaml
 publish
 icon.svg
 MISC/
+OUTPUT*.txt
+AGENTS.md
+AGENTS/
+AGENT_OUTPUT/
+NEXT_SESSION_PROMPT.md
