@@ -3,6 +3,7 @@ const extension = require('../extension');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { EventEmitter } = require('events');
 let vscode;
 try {
@@ -167,6 +168,10 @@ describe('Extension Test Suite', () => {
         assert.strictEqual(extension.validateInstallPath('/usr/share/code/bin'), true);
     });
 
+    it('validateInstallPath allows custom path in home', () => {
+        assert.strictEqual(extension.validateInstallPath('/home/void/Programs/vscode2'), true);
+    });
+
     it('validateInstallPath rejects root', () => {
         assert.strictEqual(extension.validateInstallPath('/'), false);
     });
@@ -185,6 +190,14 @@ describe('Extension Test Suite', () => {
 
     it('validateInstallPath rejects /home', () => {
         assert.strictEqual(extension.validateInstallPath('/home'), false);
+    });
+
+    it('validateInstallPath rejects /tmp', () => {
+        assert.strictEqual(extension.validateInstallPath('/tmp'), false);
+    });
+
+    it('validateInstallPath allows subdirectory under /home', () => {
+        assert.strictEqual(extension.validateInstallPath('/home/void'), true);
     });
 
     it('validateBinaryName accepts valid names', () => {
@@ -437,6 +450,16 @@ describe('getInstallPath', () => {
         try {
             const result = extension.getInstallPath();
             assert.strictEqual(result, '/custom/path');
+        } finally {
+            vscode.__clearConfig();
+        }
+    });
+
+    it('expands ~ to home directory', () => {
+        vscode.__setConfig('installPath', '~/Programs/vscode2');
+        try {
+            const result = extension.getInstallPath();
+            assert.strictEqual(result, path.join(os.homedir(), 'Programs/vscode2'));
         } finally {
             vscode.__clearConfig();
         }

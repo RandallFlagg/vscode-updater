@@ -20,16 +20,69 @@ const cpStat = promisify(fs.stat);
 
 const DEFAULT_UPDATE_CHECK_URL = 'https://update.code.visualstudio.com/api/releases/stable';
 const DEFAULT_UPDATE_DOWNLOAD_URL = 'https://update.code.visualstudio.com';
+const CACHE_DIR = path.join(os.homedir(), '.cache', 'vscode-updater');
 
-const ALLOWED_INSTALL_PREFIXES = [
-    '/usr/share/code',
-    '/usr/share/code-insiders',
-    '/usr/share/vscode',
-    '/opt/visual-studio-code',
-    '/opt/visual-studio-code-insiders',
-    '/opt/vscode',
-    path.join(os.homedir(), '.vscode'),
-    path.join(os.homedir(), '.vscode-insiders')
+function getCacheKey(url) {
+    return url.replace(/[^a-zA-Z0-9]/g, '_');
+}
+
+function getCacheFilePath(url) {
+    return path.join(CACHE_DIR, getCacheKey(url) + '.tar.gz');
+}
+
+async function ensureCacheDir() {
+    try {
+        await fs.promises.mkdir(CACHE_DIR, { recursive: true });
+    } catch {
+        // ignore
+    }
+}
+
+async function getCachedFile(url) {
+    await ensureCacheDir();
+    const cachePath = getCacheFilePath(url);
+    if (fs.existsSync(cachePath)) {
+        try {
+            const stats = await fs.promises.stat(cachePath);
+            if (stats.size > 0) {
+                const gzipBuffer = Buffer.alloc(2);
+                const fd = await fs.promises.open(cachePath, 'r');
+                await fd.read(gzipBuffer, 0, 2, 0);
+                await fd.close();
+                if (gzipBuffer[0] === 0x1f && gzipBuffer[1] === 0x8b) {
+                    return cachePath;
+                }
+            }
+        } catch {
+            // ignore corrupt cache
+        }
+    }
+    return null;
+}
+
+async function saveToCache(url, filePath) {
+    await ensureCacheDir();
+    const cachePath = getCacheFilePath(url);
+    try {
+        await fs.promises.copyFile(filePath, cachePath);
+    } catch {
+        // ignore cache write errors
+    }
+}
+
+const FORBIDDEN_INSTALL_PREFIXES = [
+    '/',
+    '/usr',
+    '/home',
+    '/tmp',
+    '/var',
+    '/snap',
+    '/dev',
+    '/proc',
+    '/sys',
+    '/boot',
+    '/root',
+    '/nix'
 ];
 
 let updateCheckUrl;
@@ -70,7 +123,11 @@ function resolveUrls() {
 
 function getInstallPath() {
     const config = vscode.workspace.getConfiguration('vscode-updater');
-    return config.get('installPath') || detectInstallPath();
+    let installPath = config.get('installPath');
+    if (installPath && installPath.startsWith('~/')) {
+        installPath = path.join(os.homedir(), installPath.slice(2));
+    }
+    return installPath || detectInstallPath();
 }
 
 function detectInstallPath() {
@@ -101,7 +158,7 @@ function detectInstallPath() {
 }
 
 function validateInstallPath(installPath) {
-    if (!installPath || installPath === '/') {
+    if (!installPath || installPath === '') {
         return false;
     }
 
@@ -112,14 +169,15 @@ function validateInstallPath(installPath) {
         resolved = path.resolve(installPath);
     }
     
-    for (const prefix of ALLOWED_INSTALL_PREFIXES) {
-        const resolvedPrefix = path.resolve(prefix);
-        if (resolved === resolvedPrefix || resolved.startsWith(resolvedPrefix + path.sep)) {
-            return true;
+    const normalizedResolved = resolved.replace(/\\/g, '/');
+    for (const prefix of FORBIDDEN_INSTALL_PREFIXES) {
+        const normalizedPrefix = prefix.replace(/\\/g, '/');
+        if (normalizedResolved === normalizedPrefix || normalizedResolved === normalizedPrefix + '/') {
+            return false;
         }
     }
 
-    return false;
+    return true;
 }
 
 function getCurrentVersion() {
@@ -421,8 +479,19 @@ async function performUpdate() {
                 throw new Error('canceled');
             });
 
-            progress.report({ message: 'Downloading update...' });
-            await downloadFile(getDownloadUrl(), tarFile);
+            const downloadUrl = getDownloadUrl();
+            const cachedFile = await getCachedFile(downloadUrl);
+            
+            if (cachedFile) {
+                progress.report({ message: 'Using cached download...' });
+                updateStatusBar('updating');
+                await cpCp(cachedFile, tarFile, { recursive: true });
+            } else {
+                progress.report({ message: 'Downloading update...' });
+                updateStatusBar('updating');
+                await downloadFile(downloadUrl, tarFile);
+                await saveToCache(downloadUrl, tarFile);
+            }
 
             const gzipBuffer = Buffer.alloc(2);
             const fd = await fs.promises.open(tarFile, 'r');

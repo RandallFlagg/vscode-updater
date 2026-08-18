@@ -30,7 +30,7 @@ This extension **cannot** intercept or replace VS Code's built-in "Update Availa
 
 This extension contributes the following settings:
 
-* `vscode-updater.installPath`: Custom installation directory. If not set, the extension automatically detects the running VS Code installation path. Must be under `/usr/share/code`, `/usr/share/code-insiders`, `/opt/visual-studio-code`, `/opt/visual-studio-code-insiders`, or `~/.vscode*` for safety reasons.
+* `vscode-updater.installPath`: Custom installation directory. If not set, the extension automatically detects the running VS Code installation path. Can be any existing directory; critical system paths (`/`, `/usr`, `/home`, `/tmp`) are blocked for safety.
 * `vscode-updater.autoBackup`: Enable or disable automatic backup before updating (default: `true`).
 * `vscode-updater.checkInterval`: How often to check for updates in days (default: `1`).
 * `vscode-updater.channel`: VS Code release channel to check and download. Options: `stable` (default), `insider`.
@@ -95,7 +95,7 @@ Run tests with:
 - `validateInstallPath` uses `fs.realpathSync` to prevent symlink escapes, but this is not a full security boundary.
 - The restart command uses `pkill -x` which may not work on some Wayland compositors; in that case, restart manually.
 - This extension is Linux-only.
-- `installPath` is restricted to known safe prefixes (`/usr/share/code*`, `/opt/visual-studio-code*`, `~/.vscode*`). Paths like `/tmp/vscode` are rejected for safety.
+- `installPath` blocks critical system directories (`/`, `/usr`, `/home`, `/tmp`, `/var`, `/snap`, `/dev`, `/proc`, `/sys`, `/boot`, `/root`, `/nix`) but allows custom paths like `~/myApps/vscode`.
 
 ## Troubleshooting
 

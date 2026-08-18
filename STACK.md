@@ -22,6 +22,11 @@ JavaScript (Node.js runtime). No TypeScript unless explicitly requested.
 - Target engine: `^1.97.0`
 - Use the VS Code Extension API (`vscode` module) for all extension functionality.
 
+## Workflow Rules
+- Always update `CHANGELOG.md` when making changes that affect users
+- Always update `REVIEW.md` and `QA_REPORT.md` after completing a review/QA pass
+- Do not leave placeholder values (`TODO`, `your-username`, etc.) in committed code
+
 ## Scripts
 - `pnpm run lint` — run ESLint
 - `pnpm run pretest` — runs lint automatically before tests
