@@ -6,12 +6,17 @@ All notable changes to the "vscode-updater" extension will be documented in this
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 -->
 
+## [1.3.16] - 2026-08-17
+
+### Fixed
+- `checkOnStartup: true` now runs the startup check immediately, bypassing `globalState` read that was causing the check to be silently skipped
+
 ## [1.3.15] - 2026-08-17
 
 ### Fixed
 - `node_modules.asar` validation now retries 3 times over 500ms to avoid false positives from filesystem metadata race condition after `mv`
 - Error handler now removes existing `.BAD` folder before renaming, preventing `ENOTEMPTY` failure that skipped restore
-- Success notification already present: shows "VS Code updated successfully! Please restart to apply changes." with "Restart Now" button
+- Success notification after update: shows "VS Code updated successfully! Please restart to apply changes." with "Restart Now" button
 
 ### Added
 - Tests for `validateFileSize` retry behavior

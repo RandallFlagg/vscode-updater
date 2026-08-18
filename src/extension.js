@@ -941,13 +941,9 @@ function activate(context) {
     clearTimeout(checkTimeout);
 
     if (getEnabled()) {
+        log('info', 'Extension is enabled, checking startup behavior');
+        log('trace', 'getCheckOnStartup():', getCheckOnStartup());
         (async () => {
-            const lastCheckTimestamp = await globalState.get(LAST_CHECK_KEY).catch(() => null);
-            const checkIntervalDays = Math.max(1, parseInt(getConfig().get('checkInterval')) || 1);
-            const rawIntervalMs = checkIntervalDays * 24 * 60 * 60 * 1000;
-            const MAX_SAFE_TIMEOUT = 2147483647;
-            const checkIntervalMs = Math.min(rawIntervalMs, MAX_SAFE_TIMEOUT);
-            
             if (getCheckOnStartup()) {
                 log('info', 'checkOnStartup enabled, performing initial update check...');
                 checkForUpdates().catch((err) => {
@@ -957,14 +953,43 @@ function activate(context) {
                     lastNotifiedVersion = null;
                     updateStatusBar('error');
                 });
-            } else if (lastCheckTimestamp) {
-                const elapsed = Date.now() - lastCheckTimestamp;
-                const remaining = checkIntervalMs - elapsed;
-                if (remaining > 0) {
-                    log('info', `Last check was ${Math.round(elapsed / 1000 / 60)} minutes ago, next check in ${Math.round(remaining / 1000 / 60)} minutes`);
-                    scheduleNextCheck(remaining);
+                scheduleNextCheck();
+            } else {
+                log('trace', 'Reading globalState for remaining interval...');
+                let lastCheckTimestamp = null;
+                try {
+                    lastCheckTimestamp = await Promise.race([
+                        globalState.get(LAST_CHECK_KEY),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('globalState.get timeout')), 5000))
+                    ]);
+                    log('trace', 'lastCheckTimestamp:', lastCheckTimestamp);
+                } catch (err) {
+                    log('error', 'globalState.get failed:', err);
+                }
+                const checkIntervalDays = Math.max(1, parseInt(getConfig().get('checkInterval')) || 1);
+                const rawIntervalMs = checkIntervalDays * 24 * 60 * 60 * 1000;
+                const MAX_SAFE_TIMEOUT = 2147483647;
+                const checkIntervalMs = Math.min(rawIntervalMs, MAX_SAFE_TIMEOUT);
+                
+                if (lastCheckTimestamp) {
+                    const elapsed = Date.now() - lastCheckTimestamp;
+                    const remaining = checkIntervalMs - elapsed;
+                    if (remaining > 0) {
+                        log('info', `Last check was ${Math.round(elapsed / 1000 / 60)} minutes ago, next check in ${Math.round(remaining / 1000 / 60)} minutes`);
+                        scheduleNextCheck(remaining);
+                    } else {
+                        log('info', 'Last check was older than interval, running initial check');
+                        checkForUpdates().catch((err) => {
+                            log('error', 'Initial update check failed:', err);
+                            updateAvailable = false;
+                            latestVersion = null;
+                            lastNotifiedVersion = null;
+                            updateStatusBar('error');
+                        });
+                        scheduleNextCheck();
+                    }
                 } else {
-                    log('info', 'Last check was older than interval, running initial check');
+                    log('info', 'No previous check timestamp, performing initial update check...');
                     checkForUpdates().catch((err) => {
                         log('error', 'Initial update check failed:', err);
                         updateAvailable = false;
@@ -974,16 +999,6 @@ function activate(context) {
                     });
                     scheduleNextCheck();
                 }
-            } else {
-                log('info', 'No previous check timestamp, performing initial update check...');
-                checkForUpdates().catch((err) => {
-                    log('error', 'Initial update check failed:', err);
-                    updateAvailable = false;
-                    latestVersion = null;
-                    lastNotifiedVersion = null;
-                    updateStatusBar('error');
-                });
-                scheduleNextCheck();
             }
         })();
     } else {
