@@ -12,7 +12,7 @@
   },
   "homepage": "https://github.com/RandallFlagg/vscode-updater",
   "description": "Automatically update VS Code on Linux",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "engines": {
     "vscode": "^1.97.0",
     "linux": "*"
@@ -91,6 +91,16 @@
           "type": "string",
           "default": "",
           "description": "Binary name to restart when flavour is 'other'. Leave empty to use 'code'."
+        },
+        "vscode-updater.debug.deleteDownloadedArchive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Delete the downloaded archive after updating. Set to false to keep the archive for debugging."
+        },
+        "vscode-updater.debug.keepFailedFolder": {
+          "type": "boolean",
+          "default": false,
+          "description": "When update fails, keep the new folder with a .BAD suffix instead of restoring from backup. Useful for debugging."
         }
       }
     }

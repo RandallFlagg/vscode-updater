@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./icon.png" alt="Project Logo" width="128" height="128">
+</p>
+
 # VSCode Updater
 
 A VS Code extension that automates updating VS Code on Linux for users who don't have a package manager handling updates.
@@ -38,6 +42,8 @@ This extension contributes the following settings:
 * `vscode-updater.customUpdateBaseUrl`: Base URL for update downloads when flavour is `other`. Example: `https://update.example.com`
 * `vscode-updater.customReleasesUrl`: Full URL for releases list when flavour is `other`. Example: `https://update.example.com/api/releases/stable`
 * `vscode-updater.customBinaryName`: Binary name to restart when flavour is `other`. Leave empty to use `code`.
+* `vscode-updater.debug.deleteDownloadedArchive`: Delete the downloaded archive after updating (default: `true`). Set to `false` to keep the archive for debugging.
+* `vscode-updater.debug.keepFailedFolder`: When update fails, keep the new folder with a `.BAD` suffix instead of restoring from backup (default: `false`). Useful for debugging failed updates.
 
 ## Commands
 
@@ -96,6 +102,7 @@ Run tests with:
 - The restart command uses `pkill -x` which may not work on some Wayland compositors; in that case, restart manually.
 - This extension is Linux-only.
 - `installPath` blocks critical system directories (`/`, `/usr`, `/home`, `/tmp`, `/var`, `/snap`, `/dev`, `/proc`, `/sys`, `/boot`, `/root`, `/nix`) but allows custom paths like `~/myApps/vscode`.
+- Downloaded tarballs are cached in `~/.cache/vscode-updater/` to speed up repeated testing. The cache is not automatically cleared.
 
 ## Troubleshooting
 
@@ -110,9 +117,3 @@ Run tests with:
 
 **Update button still shows in VS Code**
 - This is expected. This extension cannot suppress VS Code's built-in update notification. Use the extension's status bar or command palette instead.
-
-## Release Notes
-
-### 1.0.0
-
-Initial release of VSCode Updater.

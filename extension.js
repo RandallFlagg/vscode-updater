@@ -14,7 +14,7 @@ const { URL } = require('url');
 
 const cpMkdir = promisify(fs.mkdir);
 const cpReaddir = promisify(fs.readdir);
-const cpCp = promisify(fs.cp);
+
 const cpRm = promisify(fs.rm);
 const cpStat = promisify(fs.stat);
 
@@ -64,7 +64,7 @@ async function saveToCache(url, filePath) {
     await ensureCacheDir();
     const cachePath = getCacheFilePath(url);
     try {
-        await fs.promises.copyFile(filePath, cachePath);
+        await fs.promises.rename(filePath, cachePath);
     } catch {
         // ignore cache write errors
     }
@@ -462,7 +462,7 @@ async function performUpdate() {
 
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'vscode-update-'));
     const tarFile = path.join(tmpDir, 'vscode.tar.gz');
-    let backupPath = null;
+    let oldPath = null;
 
     try {
         await vscode.window.withProgress({
@@ -472,8 +472,8 @@ async function performUpdate() {
         }, async (progress, token) => {
             token.onCancellationRequested(() => {
                 cpRm(tmpDir, { recursive: true, force: true }).catch(() => {});
-                if (backupPath) {
-                    cpRm(backupPath, { recursive: true, force: true }).catch(() => {});
+                if (oldPath) {
+                    cpRm(oldPath, { recursive: true, force: true }).catch(() => {});
                 }
                 vscode.window.showInformationMessage('Update canceled.');
                 throw new Error('canceled');
@@ -482,33 +482,31 @@ async function performUpdate() {
             const downloadUrl = getDownloadUrl();
             const cachedFile = await getCachedFile(downloadUrl);
             
+            let archivePath;
             if (cachedFile) {
                 progress.report({ message: 'Using cached download...' });
                 updateStatusBar('updating');
-                await cpCp(cachedFile, tarFile, { recursive: true });
+                archivePath = cachedFile;
             } else {
                 progress.report({ message: 'Downloading update...' });
                 updateStatusBar('updating');
                 await downloadFile(downloadUrl, tarFile);
                 await saveToCache(downloadUrl, tarFile);
+                archivePath = getCacheFilePath(getDownloadUrl());
             }
 
             const gzipBuffer = Buffer.alloc(2);
-            const fd = await fs.promises.open(tarFile, 'r');
+            const fd = await fs.promises.open(archivePath, 'r');
             await fd.read(gzipBuffer, 0, 2, 0);
             await fd.close();
             if (gzipBuffer[0] !== 0x1f || gzipBuffer[1] !== 0x8b) {
                 throw new Error('Downloaded file is not a valid gzip archive');
             }
 
-            progress.report({ message: 'Creating backup...' });
-            backupPath = path.join(os.tmpdir(), `vscode-backup-${Date.now()}`);
-            await cpCp(installPath, backupPath, { recursive: true });
-
             progress.report({ message: 'Extracting new version...' });
             const extractDir = path.join(tmpDir, 'extracted');
             await cpMkdir(extractDir, { recursive: true });
-            await extractTarGz(tarFile, extractDir);
+            await extractTarGz(archivePath, extractDir);
 
             const extractedContents = await cpReaddir(extractDir);
             const sourceDir = extractedContents.length === 1 && (await cpStat(path.join(extractDir, extractedContents[0]))).isDirectory()
@@ -521,22 +519,36 @@ async function performUpdate() {
             }
 
             progress.report({ message: 'Replacing installation...' });
-            const files = await cpReaddir(installPath);
-            for (const file of files) {
-                await cpRm(path.join(installPath, file), { recursive: true, force: true });
+            oldPath = installPath + '.OLD';
+            
+            if (fs.existsSync(oldPath)) {
+                await cpRm(oldPath, { recursive: true, force: true });
             }
-            const newFiles = await cpReaddir(sourceDir);
-            for (const file of newFiles) {
-                await cpCp(path.join(sourceDir, file), path.join(installPath, file), { recursive: true });
+            
+            await fs.promises.rename(installPath, oldPath);
+            await fs.promises.rename(sourceDir, installPath);
+
+            const asarPath = path.join(installPath, 'resources/app/node_modules.asar');
+            if (fs.existsSync(asarPath)) {
+                const stats = await fs.promises.stat(asarPath);
+                if (stats.size === 0) {
+                    throw new Error('node_modules.asar is empty after copy — installation may be corrupted');
+                }
             }
 
             progress.report({ message: 'Cleaning up...' });
-            await cpRm(tmpDir, { recursive: true, force: true });
-
-            const autoBackup = getConfig().get('autoBackup');
-            if (!autoBackup && backupPath) {
-                await cpRm(backupPath, { recursive: true, force: true });
+            
+            const deleteArchive = getConfig().get('debug.deleteDownloadedArchive');
+            if (deleteArchive === false) {
+                const debugDir = path.join(CACHE_DIR, 'debug');
+                await fs.promises.mkdir(debugDir, { recursive: true }).catch(() => {});
+                const debugPath = path.join(debugDir, `vscode-${latestVersion || 'latest'}.tar.gz`);
+                await fs.promises.copyFile(archivePath, debugPath).catch(() => {});
             }
+            
+            await cpRm(tmpDir, { recursive: true, force: true });
+            await cpRm(oldPath, { recursive: true, force: true }).catch(() => {});
+            oldPath = null;
 
             vscode.window.showInformationMessage('VS Code updated successfully! Please restart to apply changes.', 'Restart Now').then(selection => {
                 if (selection === 'Restart Now') {
@@ -547,35 +559,37 @@ async function performUpdate() {
             updateAvailable = false;
         });
     } catch (error) {
-        if (error.message === 'canceled') {
+        if (error && error.message === 'canceled') {
             return;
         }
         updateAvailable = false;
         
         await cpRm(tmpDir, { recursive: true, force: true }).catch(() => {});
         
-        if (backupPath) {
+        const keepFailedFolder = getConfig().get('debug.keepFailedFolder');
+        
+        if (keepFailedFolder && installPath && fs.existsSync(installPath)) {
             try {
-                const autoBackup = getConfig().get('autoBackup');
-                if (autoBackup) {
-                    const files = await cpReaddir(installPath);
-                    for (const file of files) {
-                        await cpRm(path.join(installPath, file), { recursive: true, force: true });
-                    }
-                    const backupFiles = await cpReaddir(backupPath);
-                    for (const file of backupFiles) {
-                        await cpCp(path.join(backupPath, file), path.join(installPath, file), { recursive: true });
-                    }
-                    vscode.window.showInformationMessage('Update failed. Restored from backup.');
-                } else {
-                    await cpRm(backupPath, { recursive: true, force: true }).catch(() => {});
+                const badPath = installPath + '.BAD';
+                await fs.promises.rename(installPath, badPath);
+                vscode.window.showInformationMessage(`Update failed. Kept failed folder as: ${badPath}`);
+            } catch (renameError) {
+                console.error('Failed to rename failed folder:', renameError);
+                if (oldPath && fs.existsSync(oldPath)) {
+                    await fs.promises.rename(oldPath, installPath).catch(() => {});
                 }
+            }
+        } else if (oldPath && fs.existsSync(oldPath)) {
+            try {
+                await fs.promises.rename(oldPath, installPath);
             } catch (restoreError) {
-                console.error('Failed to restore from backup:', restoreError);
+                console.error('Failed to restore old installation:', restoreError);
             }
         }
         
-        vscode.window.showErrorMessage(`Update failed: ${error.message}`);
+        const errorMessage = error && error.message ? error.message : String(error);
+        console.error('Update failed:', error);
+        vscode.window.showErrorMessage(`Update failed: ${errorMessage}`);
         updateStatusBar('error');
     }
 }
