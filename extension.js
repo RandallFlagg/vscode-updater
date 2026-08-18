@@ -526,7 +526,16 @@ async function performUpdate() {
             }
             
             await fs.promises.rename(installPath, oldPath);
-            await fs.promises.rename(sourceDir, installPath);
+            try {
+                await fs.promises.rename(sourceDir, installPath);
+            } catch (error) {
+                if (error.code === 'EXDEV') {
+                    await fs.cp(sourceDir, installPath, { recursive: true });
+                    await cpRm(sourceDir, { recursive: true, force: true });
+                } else {
+                    throw error;
+                }
+            }
 
             const asarPath = path.join(installPath, 'resources/app/node_modules.asar');
             if (fs.existsSync(asarPath)) {

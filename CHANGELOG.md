@@ -6,6 +6,11 @@ All notable changes to the "vscode-updater" extension will be documented in this
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 -->
 
+## [1.3.1] - 2026-08-14
+
+### Fixed
+- Cross-device rename (`EXDEV`) when moving extracted files from `/tmp` to install path by falling back to recursive copy
+
 ## [1.3.0] - 2026-08-14
 
 ### Changed
