@@ -6,10 +6,37 @@ All notable changes to the "vscode-updater" extension will be documented in this
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 -->
 
-## [1.3.16] - 2026-08-17
+## [1.4.0] - 2026-08-18
+
+### Changed
+- Refactored `performUpdate()` to extract directly to `installPath` instead of extracting to temp then moving
+- Backup now uses timestamped suffix (`installPath.OLD.<timestamp>`) instead of fixed `.OLD`, eliminating `ENOTEMPTY` errors on subsequent updates
+- `restartVSCode()` simplified: only kills old process group, no spawn (automatic restart not yet working)
+- Removed redundant debug archive copy — cache itself is preserved when `debug.deleteDownloadedArchive` is `false`
 
 ### Fixed
 - `checkOnStartup: true` now runs the startup check immediately, bypassing `globalState` read that was causing the check to be silently skipped
+- Error handler simplified: on failure, removes failed `installPath` and restores timestamped backup directly
+- `debug.keepFailedFolder` now leaves both failed `installPath` and timestamped backup untouched for debugging
+- `node_modules.asar` validation now retries 3 times over 500ms to avoid false positives from filesystem metadata race condition after `mv`
+
+### Added
+- `vscode-updater.keepOldVersion` setting (default: false) — timestamped backups are always preserved; this setting is for future cleanup logic
+- `vscode-updater.enabled` setting (default: `true`) — master switch for automatic update checks
+- `vscode-updater.checkOnStartup` setting (default: `true`) — controls whether an update check runs on VS Code startup
+- Tests for `validateFileSize` retry behavior, `enabled`/`checkOnStartup` behavior, and notification suppression
+
+## [1.3.16] - 2026-08-17
+
+### Changed
+- Refactored `performUpdate()` to extract directly to `installPath` instead of extracting to temp then moving
+- Backup now uses timestamped suffix (`installPath.OLD.<timestamp>`) instead of fixed `.OLD`, eliminating `ENOTEMPTY` errors on subsequent updates
+- `vscode-updater.keepOldVersion` setting now controls whether timestamped backups are kept (default: false, backups always preserved with unique timestamp)
+
+### Fixed
+- `checkOnStartup: true` now runs the startup check immediately, bypassing `globalState` read that was causing the check to be silently skipped
+- Error handler simplified: on failure, removes failed `installPath` and restores timestamped backup directly
+- `debug.keepFailedFolder` now leaves both failed `installPath` and timestamped backup untouched for debugging
 
 ## [1.3.15] - 2026-08-17
 

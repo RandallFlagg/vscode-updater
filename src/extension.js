@@ -12,11 +12,7 @@ const os = require('os');
 const { promisify } = require('util');
 const { URL } = require('url');
 
-const cpMkdir = promisify(fs.mkdir);
-const cpReaddir = promisify(fs.readdir);
-
 const cpRm = promisify(fs.rm);
-const cpStat = promisify(fs.stat);
 
 const DEFAULT_UPDATE_CHECK_URL = 'https://update.code.visualstudio.com/api/releases/stable';
 const DEFAULT_UPDATE_DOWNLOAD_URL = 'https://update.code.visualstudio.com';
@@ -144,7 +140,7 @@ let globalState;
 
 const LAST_CHECK_KEY = 'vscode-updater.lastCheckTimestamp';
 
-async function validateFileSize(filePath, label, retries = 3, retryDelay = 200) {
+async function validateFileSize(filePath, label, retries = 3, retryDelay = 250) {
     let stats;
     for (let attempt = 1; attempt <= retries; attempt++) {
         stats = await fs.promises.stat(filePath);
@@ -501,13 +497,32 @@ async function extractTarGz(tarPath, dest) {
     log('info', 'extractTarGz() starting');
     log('debug', 'Extracting:', tarPath, '->', dest);
     return new Promise((resolve, reject) => {
-        execFile('tar', ['-xzf', tarPath, '-C', dest], { timeout: getConfig().get('tarTimeout') || 600000 }, (error) => {
-            if (error) {
-                log('error', 'tar extraction failed:', error);
-                reject(error);
-            } else {
+        const flags = '-xzf';
+        const tarProc = spawn('tar', [flags, tarPath, '-C', dest], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        let stderrData = '';
+
+        tarProc.stdout.on('data', () => {});
+
+        tarProc.stderr.on('data', (chunk) => {
+            stderrData += chunk.toString();
+        });
+
+        tarProc.on('error', (err) => {
+            log('error', 'tar spawn failed:', err);
+            reject(err);
+        });
+
+        tarProc.on('close', (code) => {
+            if (code === 0) {
                 log('info', 'tar extraction completed');
                 resolve();
+            } else {
+                const errorMsg = stderrData.trim() || `tar exited with code ${code}`;
+                log('error', 'tar extraction failed:', errorMsg);
+                reject(new Error(`tar extraction failed: ${errorMsg}`));
             }
         });
     });
@@ -540,16 +555,15 @@ function getBinaryName() {
 
 function restartVSCode() {
     log('info', 'restartVSCode() called');
-    const binaryName = getBinaryName();
-    const currentExecPath = process.execPath;
-    log('debug', 'Restarting with binary:', binaryName, 'execPath:', currentExecPath);
+    const oldParentPid = process.ppid;
+    log('trace', 'Old parent PID:', oldParentPid);
     
-    spawn('pkill', ['-x', binaryName], { stdio: 'ignore' }).on('close', () => {
-        spawn(currentExecPath, [], {
-            detached: true,
-            stdio: 'inherit'
-        }).unref();
-    }).unref();
+    try {
+        process.kill(-oldParentPid, 'SIGKILL');
+        log('info', 'Killed old process group:', oldParentPid);
+    } catch (err) {
+        log('error', 'Failed to kill old process group:', err);
+    }
 }
 
 async function performUpdate() {
@@ -562,6 +576,7 @@ async function performUpdate() {
         return;
     }
 
+    let archivePath;
     if (!fs.existsSync(installPath)) {
         vscode.window.showErrorMessage(`Installation path does not exist: ${installPath}`);
         log('error', 'Install path does not exist:', installPath);
@@ -606,7 +621,6 @@ async function performUpdate() {
             const cachedFile = await getCachedFile(downloadUrl);
             log('trace', 'Cached file result:', cachedFile);
             
-            let archivePath;
             if (cachedFile) {
                 progress.report({ message: 'Using cached download...' });
                 updateStatusBar('updating');
@@ -636,72 +650,35 @@ async function performUpdate() {
             }
             log('debug', 'Gzip header valid');
 
-            progress.report({ message: 'Extracting new version...' });
-            log('info', 'Extracting archive...');
-            const extractDir = path.join(tmpDir, 'extracted');
-            await cpMkdir(extractDir, { recursive: true });
-            await extractTarGz(archivePath, extractDir);
-            log('info', 'Extraction completed to:', extractDir);
-
-            log('trace', 'Reading extracted contents from:', extractDir);
-            const extractedContents = await cpReaddir(extractDir);
-            log('trace', 'Extracted contents:', extractedContents);
-            const sourceDir = extractedContents.length === 1 && (await cpStat(path.join(extractDir, extractedContents[0]))).isDirectory()
-                ? path.join(extractDir, extractedContents[0])
-                : extractDir;
-            log('debug', 'Source directory:', sourceDir);
-
-            const sourceFiles = await cpReaddir(sourceDir);
-            log('trace', 'Source files count:', sourceFiles.length);
-            if (sourceFiles.length === 0) {
-                log('error', 'Extracted archive is empty');
-                throw new Error('Extracted archive is empty');
-            }
-
-            log('trace', 'Validating source asar before move...');
-            const sourceAsarPath = path.join(sourceDir, 'resources/app/node_modules.asar');
-            if (fs.existsSync(sourceAsarPath)) {
-                const sourceAsarStats = await validateFileSize(sourceAsarPath, 'Source asar');
-                log('trace', 'Source asar size:', sourceAsarStats.size, 'bytes');
-            }
-
             progress.report({ message: 'Replacing installation...' });
-    if (getConfig().get('autoBackup') === false) {
-        log('info', 'Skipping backup because autoBackup is disabled');
-        await cpRm(installPath, { recursive: true, force: true });
-    } else {
-        oldPath = installPath + '.OLD';
-        
-        if (fs.existsSync(oldPath)) {
-            log('debug', 'Removing existing oldPath:', oldPath);
-            await cpRm(oldPath, { recursive: true, force: true });
-        }
-        
-        await new Promise((resolve, reject) => {
-            execFile('mv', [installPath, oldPath], { timeout: getConfig().get('mvTimeout') || 600000 }, (err) => {
-                if (err) {
-                    log('error', 'mv installPath to oldPath failed:', err);
-                    reject(err);
-                } else {
-                    log('debug', 'mv installPath to oldPath succeeded');
-                    resolve();
-                }
-            });
-        });
-    }
-    
-    log('debug', 'Attempting mv: sourceDir -> installPath');
-    await new Promise((resolve, reject) => {
-        execFile('mv', [sourceDir, installPath], { timeout: getConfig().get('mvTimeout') || 600000 }, (err) => {
-            if (err) {
-                reject(err);
+            
+            if (getConfig().get('autoBackup') === false) {
+                log('info', 'Skipping backup because autoBackup is disabled');
+                await cpRm(installPath, { recursive: true, force: true });
             } else {
-                log('info', 'mv succeeded');
-                resolve();
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                oldPath = installPath + '.OLD.' + timestamp;
+                log('trace', 'Backup path:', oldPath);
+                
+                await new Promise((resolve, reject) => {
+                    execFile('mv', [installPath, oldPath], { timeout: getConfig().get('mvTimeout') || 600000 }, (err) => {
+                        if (err) {
+                            log('error', 'mv installPath to oldPath failed:', err);
+                            reject(err);
+                        } else {
+                            log('debug', 'mv installPath to oldPath succeeded');
+                            resolve();
+                        }
+                    });
+                });
             }
-        });
-    });
-
+            
+            progress.report({ message: 'Extracting new version...' });
+            log('info', 'Extracting archive directly to installPath...');
+            await fs.promises.mkdir(installPath, { recursive: true });
+            await extractTarGz(archivePath, installPath);
+            log('info', 'Extraction completed to:', installPath);
+            
             log('debug', 'Validating node_modules.asar...');
             const asarPath = path.join(installPath, 'resources/app/node_modules.asar');
             log('trace', 'asarPath:', asarPath);
@@ -716,24 +693,19 @@ async function performUpdate() {
                 log('warn', 'node_modules.asar not found at expected path');
             }
 
-            progress.report({ message: 'Cleaning up...' });
-            log('info', 'Cleaning up temp files...');
+            log('trace', 'Removing tmpDir:', tmpDir);
+            await cpRm(tmpDir, { recursive: true, force: true });
             
             const deleteArchive = getConfig().get('debug.deleteDownloadedArchive');
             log('trace', 'debug.deleteDownloadedArchive setting:', deleteArchive);
-            if (deleteArchive === false) {
-                log('debug', 'Preserving archive for debugging');
-                const debugDir = path.join(CACHE_DIR, 'debug');
-                await fs.promises.mkdir(debugDir, { recursive: true }).catch(() => {});
-                const debugPath = path.join(debugDir, `vscode-${latestVersion || 'latest'}.tar.gz`);
-                await fs.promises.copyFile(archivePath, debugPath).catch(() => {});
+            if (deleteArchive !== false && archivePath) {
+                log('debug', 'Deleting cached archive:', archivePath);
+                await fs.promises.unlink(archivePath).catch(() => {});
             }
             
-            log('trace', 'Removing tmpDir:', tmpDir);
-            await cpRm(tmpDir, { recursive: true, force: true });
-            log('trace', 'Removing oldPath:', oldPath);
-            await cpRm(oldPath, { recursive: true, force: true }).catch(() => {});
-            oldPath = null;
+            const keepOldVersion = getConfig().get('keepOldVersion');
+            log('trace', 'keepOldVersion setting:', keepOldVersion);
+            log('trace', 'Backup kept at:', oldPath);
 
             log('info', 'Update completed successfully');
             vscode.window.showInformationMessage('VS Code updated successfully! Please restart to apply changes.', 'Restart Now').then(selection => {
@@ -755,32 +727,30 @@ async function performUpdate() {
         
         await cpRm(tmpDir, { recursive: true, force: true }).catch(() => {});
         
+        const deleteArchive = getConfig().get('debug.deleteDownloadedArchive');
+        if (deleteArchive !== false && archivePath) {
+            await fs.promises.unlink(archivePath).catch(() => {});
+        }
+        
         const keepFailedFolder = getConfig().get('debug.keepFailedFolder');
         log('trace', 'debug.keepFailedFolder setting:', keepFailedFolder);
         
         if (keepFailedFolder && installPath && fs.existsSync(installPath)) {
-            try {
-                const badPath = installPath + '.BAD';
-                log('info', 'Keeping failed folder as:', badPath);
-                if (fs.existsSync(badPath)) {
-                    log('debug', 'Removing existing .BAD folder:', badPath);
-                    await cpRm(badPath, { recursive: true, force: true });
-                }
-                await fs.promises.rename(installPath, badPath);
-                vscode.window.showInformationMessage(`Update failed. Kept failed folder as: ${badPath}`);
-            } catch (renameError) {
-                log('error', 'Failed to rename failed folder:', renameError);
-                if (oldPath && fs.existsSync(oldPath)) {
-                    await fs.promises.rename(oldPath, installPath).catch(() => {});
-                }
+            log('info', 'Keeping failed folder for debugging');
+            const message = `Update failed. Failed folder kept at: ${installPath}` + (oldPath && fs.existsSync(oldPath) ? `. Original backed up at: ${oldPath}` : '');
+            vscode.window.showInformationMessage(message);
+        } else {
+            if (installPath && fs.existsSync(installPath)) {
+                await cpRm(installPath, { recursive: true, force: true }).catch(() => {});
             }
-        } else if (oldPath && fs.existsSync(oldPath)) {
-            log('info', 'Restoring old installation from:', oldPath);
-            try {
-                await fs.promises.rename(oldPath, installPath);
-                log('info', 'Old installation restored successfully');
-            } catch (restoreError) {
-                log('error', 'Failed to restore old installation:', restoreError);
+            if (oldPath && fs.existsSync(oldPath)) {
+                log('info', 'Restoring old installation from:', oldPath);
+                try {
+                    await fs.promises.rename(oldPath, installPath);
+                    log('info', 'Old installation restored successfully');
+                } catch (restoreError) {
+                    log('error', 'Failed to restore old installation:', restoreError);
+                }
             }
         }
         
