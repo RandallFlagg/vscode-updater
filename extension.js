@@ -1,0 +1,605 @@
+let vscode;
+try {
+    vscode = require('vscode');
+} catch  {
+    vscode = require('./test/vscode-mock');
+}
+const { execFile, spawn } = require('child_process');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { promisify } = require('util');
+
+const cpMkdir = promisify(fs.mkdir);
+const cpReaddir = promisify(fs.readdir);
+const cpCp = promisify(fs.cp);
+const cpRm = promisify(fs.rm);
+const cpStat = promisify(fs.stat);
+
+const DEFAULT_UPDATE_CHECK_URL = 'https://update.code.visualstudio.com/api/releases/stable';
+const DEFAULT_UPDATE_DOWNLOAD_URL = 'https://update.code.visualstudio.com';
+
+const ALLOWED_INSTALL_PREFIXES = [
+    '/usr/share/code',
+    '/usr/share/code-insiders',
+    '/usr/share/vscode',
+    '/opt/visual-studio-code',
+    '/opt/visual-studio-code-insiders',
+    '/opt/vscode',
+    path.join(os.homedir(), '.vscode'),
+    path.join(os.homedir(), '.vscode-insiders')
+];
+
+let updateCheckUrl;
+let updateDownloadUrl;
+let statusBarItem;
+let checkInterval;
+let updateAvailable = false;
+let latestVersion = null;
+let lastNotifiedVersion = null;
+
+function getConfig() {
+    return vscode.workspace.getConfiguration('vscode-updater');
+}
+
+function resolveUrls() {
+    const config = getConfig();
+    const flavour = config.get('flavour') || 'vscode';
+    const channel = config.get('channel') || 'stable';
+
+    if (flavour === 'other') {
+        updateCheckUrl = config.get('customReleasesUrl') || DEFAULT_UPDATE_CHECK_URL;
+        updateDownloadUrl = config.get('customUpdateBaseUrl') || DEFAULT_UPDATE_DOWNLOAD_URL;
+        return;
+    }
+
+    if (flavour === 'codium') {
+        updateCheckUrl = 'https://api.github.com/repos/VSCodium/vscodium/releases/latest';
+        updateDownloadUrl = 'https://github.com/VSCodium/vscodium/releases/download';
+        return;
+    }
+
+    updateCheckUrl = `https://update.code.visualstudio.com/api/releases/${channel}`;
+    updateDownloadUrl = DEFAULT_UPDATE_DOWNLOAD_URL;
+}
+
+function getInstallPath() {
+    const config = vscode.workspace.getConfiguration('vscode-updater');
+    return config.get('installPath') || detectInstallPath();
+}
+
+function detectInstallPath() {
+    const possiblePaths = [
+        '/usr/share/code',
+        '/usr/share/code-insiders',
+        '/usr/share/vscode',
+        '/opt/visual-studio-code',
+        '/opt/visual-studio-code-insiders',
+        '/opt/vscode',
+        path.join(os.homedir(), '.vscode'),
+        path.join(os.homedir(), '.vscode-insiders')
+    ];
+    
+    for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+            return p;
+        }
+    }
+    
+    const execPath = process.execPath;
+    const installDir = path.dirname(path.dirname(execPath));
+    if (fs.existsSync(installDir)) {
+        return installDir;
+    }
+    
+    return null;
+}
+
+function validateInstallPath(installPath) {
+    if (!installPath || installPath === '/') {
+        return false;
+    }
+
+    const resolved = path.resolve(installPath);
+    
+    for (const prefix of ALLOWED_INSTALL_PREFIXES) {
+        const resolvedPrefix = path.resolve(prefix);
+        if (resolved === resolvedPrefix || resolved.startsWith(resolvedPrefix + path.sep)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function getCurrentVersion() {
+    return vscode.version;
+}
+
+function normalizeVersion(version) {
+    if (!version) return null;
+    return version.replace(/^v/, '').split(/[+-]/)[0];
+}
+
+function getPlatformSuffix() {
+    const arch = process.arch;
+    switch (arch) {
+        case 'x64':
+            return 'linux-x64';
+        case 'arm64':
+            return 'linux-arm64';
+        case 'arm':
+            return 'linux-armhf';
+        default:
+            return 'linux-x64';
+    }
+}
+
+const PLATFORM = getPlatformSuffix();
+
+async function checkForUpdates() {
+    if (updateAvailable && latestVersion === lastNotifiedVersion) {
+        return;
+    }
+
+    return new Promise((resolve, reject) => {
+        const req = https.get(updateCheckUrl, { 
+            headers: { 'User-Agent': 'VS Code Updater Extension' },
+            timeout: 30000
+        }, (res) => {
+            if (res.statusCode < 200 || res.statusCode >= 300) {
+                reject(new Error(`Version check failed with status ${res.statusCode}`));
+                return;
+            }
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    latestVersion = extractVersion(data);
+                    const normalizedLatest = normalizeVersion(latestVersion);
+                    const normalizedCurrent = normalizeVersion(getCurrentVersion());
+                    
+                    if (normalizedLatest && normalizedLatest !== normalizedCurrent) {
+                        if (normalizedLatest !== lastNotifiedVersion) {
+                            updateAvailable = true;
+                            lastNotifiedVersion = normalizedLatest;
+                            showUpdateNotification(latestVersion);
+                            updateStatusBar('update');
+                        }
+                    } else if (normalizedLatest === normalizedCurrent) {
+                        updateStatusBar('updated');
+                        updateAvailable = false;
+                    }
+} catch (err) {
+                    console.error('Failed to parse update info:', err);
+                    updateStatusBar('error');
+                }
+                resolve();
+            });
+        });
+        
+        req.on('timeout', () => {
+            req.destroy();
+            console.error('Update check timed out');
+            updateStatusBar('error');
+            resolve();
+        });
+        
+        req.on('error', (err) => {
+            console.error('Update check failed:', err);
+            updateStatusBar('error');
+            resolve();
+        });
+    });
+}
+
+function extractVersion(data) {
+    try {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+            return parsed.length > 0 ? parsed[0] : null;
+        }
+        if (parsed && parsed.tag_name) {
+            return parsed.tag_name;
+        }
+} catch (e) {
+        console.error('Failed to parse version JSON:', e);
+    }
+    return null;
+}
+
+function showUpdateNotification(version) {
+    const choice = vscode.window.showInformationMessage(
+        `VS Code ${version} is available. Would you like to update now?`,
+        'Update Now',
+        'Later'
+    );
+
+    choice.then(selection => {
+        if (selection === 'Update Now') {
+            performUpdate();
+        }
+    });
+}
+
+function getDownloadUrl() {
+    const config = getConfig();
+    const flavour = config.get('flavour') || 'vscode';
+    const version = latestVersion || 'latest';
+
+    if (flavour === 'codium') {
+        const cleanVersion = normalizeVersion(version) || version;
+        const platformMap = {
+            'linux-x64': `VSCodium-linux-x64-${cleanVersion}.tar.gz`,
+            'linux-arm64': `VSCodium-linux-arm64-${cleanVersion}.tar.gz`,
+            'linux-armhf': `VSCodium-linux-armhf-${cleanVersion}.tar.gz`
+        };
+        const filename = platformMap[PLATFORM] || platformMap['linux-x64'];
+        return `${updateDownloadUrl}/${version}/${filename}`;
+    }
+
+    return `${updateDownloadUrl}/${version}/${PLATFORM}/stable`;
+}
+
+async function followRedirects(url, maxRedirects = 5) {
+    let currentUrl = url;
+    let redirects = 0;
+    
+    while (redirects < maxRedirects) {
+        const result = await new Promise((resolve, reject) => {
+            const req = https.get(currentUrl, { 
+                headers: { 'User-Agent': 'VS Code Updater Extension' },
+                timeout: 30000 
+            }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    resolve({ redirect: res.headers.location, statusCode: res.statusCode });
+                } else {
+                    resolve({ stream: res, statusCode: res.statusCode });
+                }
+            });
+            
+            req.on('error', (err) => {
+                reject(err);
+            });
+            
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Request timed out'));
+            });
+        });
+        
+        if (result.redirect) {
+            currentUrl = result.redirect;
+            redirects++;
+        } else {
+            return result.stream;
+        }
+    }
+    
+    throw new Error('Too many redirects');
+}
+
+async function downloadFile(url, dest) {
+    const res = await followRedirects(url);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw new Error(`Download failed with status ${res.statusCode}`);
+    }
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(dest);
+        res.pipe(file);
+        file.on('finish', async () => {
+            file.close();
+            try {
+                const stats = await fs.promises.stat(dest);
+                if (stats.size === 0) {
+                    await fs.promises.rm(dest).catch(() => {});
+                    reject(new Error('Downloaded file is empty'));
+                    return;
+                }
+            } catch {
+                reject(new Error('Failed to verify downloaded file'));
+                return;
+            }
+            resolve();
+        });
+        res.on('error', reject);
+    });
+}
+
+async function extractTarGz(tarPath, dest) {
+    return new Promise((resolve, reject) => {
+        execFile('tar', ['-xzf', tarPath, '-C', dest], (error) => {
+            if (error) {
+                reject(error);
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
+function validateBinaryName(name) {
+    if (!name || typeof name !== 'string') {
+        return false;
+    }
+    return /^[a-zA-Z0-9_-]+$/.test(name);
+}
+
+function getBinaryName() {
+    const config = getConfig();
+    const flavour = config.get('flavour') || 'vscode';
+    const customBinaryName = config.get('customBinaryName');
+    
+    if (flavour === 'codium') {
+        return 'codium';
+    }
+    
+    if (flavour === 'other' && customBinaryName && validateBinaryName(customBinaryName)) {
+        return customBinaryName;
+    }
+    
+    return 'code';
+}
+
+function restartVSCode() {
+    const binaryName = getBinaryName();
+    const currentExecPath = process.execPath;
+    
+    if (process.platform === 'win32') {
+        const installDir = path.dirname(currentExecPath);
+        spawn('cmd', ['/c', `taskkill /IM ${binaryName}.exe /F && start "" "${path.join(installDir, binaryName + '.exe')}"`], {
+            detached: true,
+            stdio: 'inherit',
+            shell: true
+        }).unref();
+    } else {
+        const installDir = path.dirname(currentExecPath);
+        spawn('sh', ['-c', `pkill -x ${binaryName} && nohup "${path.join(installDir, binaryName)}" > /dev/null 2>&1 &`], {
+            detached: true,
+            stdio: 'inherit'
+        }).unref();
+    }
+}
+
+async function performUpdate() {
+    const installPath = getInstallPath();
+    if (!installPath) {
+        vscode.window.showErrorMessage('Could not detect VS Code installation path. Please set `vscode-updater.installPath` in settings.');
+        return;
+    }
+
+    if (!fs.existsSync(installPath)) {
+        vscode.window.showErrorMessage(`Installation path does not exist: ${installPath}`);
+        return;
+    }
+
+    if (!validateInstallPath(installPath)) {
+        vscode.window.showErrorMessage(`Installation path is not allowed for safety reasons: ${installPath}`);
+        return;
+    }
+
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'vscode-update-'));
+    const tarFile = path.join(tmpDir, 'vscode.tar.gz');
+    let backupPath = null;
+
+    try {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Updating VS Code...',
+            cancellable: true
+        }, async (progress, token) => {
+            token.onCancellationRequested(() => {
+                cpRm(tmpDir, { recursive: true, force: true }).catch(() => {});
+                if (backupPath) {
+                    cpRm(backupPath, { recursive: true, force: true }).catch(() => {});
+                }
+                vscode.window.showInformationMessage('Update canceled.');
+                throw new Error('canceled');
+            });
+
+            progress.report({ message: 'Downloading update...' });
+            await downloadFile(getDownloadUrl(), tarFile);
+
+            progress.report({ message: 'Creating backup...' });
+            backupPath = path.join(os.tmpdir(), `vscode-backup-${Date.now()}`);
+            await cpCp(installPath, backupPath, { recursive: true });
+
+            progress.report({ message: 'Extracting new version...' });
+            const extractDir = path.join(tmpDir, 'extracted');
+            await cpMkdir(extractDir, { recursive: true });
+            await extractTarGz(tarFile, extractDir);
+
+            const extractedContents = await cpReaddir(extractDir);
+            const sourceDir = extractedContents.length === 1 && (await cpStat(path.join(extractDir, extractedContents[0]))).isDirectory()
+                ? path.join(extractDir, extractedContents[0])
+                : extractDir;
+
+            progress.report({ message: 'Replacing installation...' });
+            const files = await cpReaddir(installPath);
+            for (const file of files) {
+                await cpRm(path.join(installPath, file), { recursive: true, force: true });
+            }
+            const newFiles = await cpReaddir(sourceDir);
+            for (const file of newFiles) {
+                await cpCp(path.join(sourceDir, file), path.join(installPath, file), { recursive: true });
+            }
+
+            progress.report({ message: 'Cleaning up...' });
+            await cpRm(tmpDir, { recursive: true, force: true });
+
+            const autoBackup = getConfig().get('autoBackup');
+            if (!autoBackup && backupPath) {
+                await cpRm(backupPath, { recursive: true, force: true });
+            }
+
+            vscode.window.showInformationMessage('VS Code updated successfully! Please restart to apply changes.', 'Restart Now').then(selection => {
+                if (selection === 'Restart Now') {
+                    restartVSCode();
+                }
+            });
+            updateStatusBar('updated');
+            updateAvailable = false;
+        });
+    } catch (error) {
+        if (error.message === 'canceled') {
+            return;
+        }
+        
+        await cpRm(tmpDir, { recursive: true, force: true }).catch(() => {});
+        
+        if (backupPath) {
+            try {
+                const autoBackup = getConfig().get('autoBackup');
+                if (autoBackup) {
+                    const files = await cpReaddir(installPath);
+                    for (const file of files) {
+                        await cpRm(path.join(installPath, file), { recursive: true, force: true });
+                    }
+                    const backupFiles = await cpReaddir(backupPath);
+                    for (const file of backupFiles) {
+                        await cpCp(path.join(backupPath, file), path.join(installPath, file), { recursive: true });
+                    }
+                    vscode.window.showInformationMessage('Update failed. Restored from backup.');
+                } else {
+                    await cpRm(backupPath, { recursive: true, force: true }).catch(() => {});
+                }
+            } catch (restoreError) {
+                console.error('Failed to restore from backup:', restoreError);
+            }
+        }
+        
+        vscode.window.showErrorMessage(`Update failed: ${error.message}`);
+        updateStatusBar('error');
+    }
+}
+
+function updateStatusBar(state) {
+    if (!statusBarItem) {
+        return;
+    }
+
+    switch (state) {
+        case 'update':
+            statusBarItem.text = '$(sync) Update Available';
+            statusBarItem.tooltip = 'VS Code update available. Click to update.';
+            statusBarItem.command = 'vscode-updater.update';
+            statusBarItem.show();
+            break;
+        case 'updated':
+            statusBarItem.text = '$(check) Up to Date';
+            statusBarItem.tooltip = 'VS Code is up to date.';
+            statusBarItem.command = null;
+            statusBarItem.show();
+            setTimeout(() => statusBarItem.hide(), 5000);
+            break;
+        case 'error':
+            statusBarItem.text = '$(error) Update Failed';
+            statusBarItem.tooltip = 'Update failed. Click to retry.';
+            statusBarItem.command = 'vscode-updater.update';
+            statusBarItem.show();
+            break;
+        case 'checking':
+            statusBarItem.text = '$(sync~spin) Checking...';
+            statusBarItem.tooltip = 'Checking for VS Code updates...';
+            statusBarItem.command = null;
+            statusBarItem.show();
+            break;
+        default:
+            statusBarItem.hide();
+    }
+}
+
+function activate(context) {
+    resolveUrls();
+
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    context.subscriptions.push(statusBarItem);
+
+    const updateCommand = vscode.commands.registerCommand('vscode-updater.update', async () => {
+        updateStatusBar('checking');
+        statusBarItem.command = 'vscode-updater.update';
+        await performUpdate();
+    });
+
+    const restartCommand = vscode.commands.registerCommand('vscode-updater.restart', async () => {
+        const unsavedEditors = vscode.workspace.textDocuments.filter(doc => doc.isDirty);
+        if (unsavedEditors.length > 0) {
+            const userResponse = await vscode.window.showWarningMessage(
+                `You have ${unsavedEditors.length} unsaved file(s). Do you want to continue? Unsaved changes will be lost.`,
+                { modal: true },
+                'Yes',
+                'No'
+            );
+            if (userResponse !== 'Yes') {
+                vscode.window.showInformationMessage('Restart canceled.');
+                return;
+            }
+        }
+        restartVSCode();
+    });
+
+    const checkNowCommand = vscode.commands.registerCommand('vscode-updater.checkNow', async () => {
+        updateStatusBar('checking');
+        updateAvailable = false;
+        latestVersion = null;
+        lastNotifiedVersion = null;
+        resolveUrls();
+        try {
+            await checkForUpdates();
+        } catch (err) {
+            console.error('Check for updates failed:', err);
+            updateStatusBar('error');
+        }
+    });
+
+    context.subscriptions.push(updateCommand, restartCommand, checkNowCommand);
+
+    const checkIntervalDays = Math.max(1, parseInt(getConfig().get('checkInterval')) || 1);
+    const checkIntervalMs = checkIntervalDays * 24 * 60 * 60 * 1000;
+    checkInterval = setInterval(() => {
+        checkForUpdates().catch((err) => {
+            console.error('Periodic update check failed:', err);
+            updateStatusBar('error');
+        });
+    }, checkIntervalMs);
+
+    const configListener = vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('vscode-updater')) {
+            resolveUrls();
+            
+            if (event.affectsConfiguration('vscode-updater.checkInterval')) {
+                clearInterval(checkInterval);
+                const newIntervalDays = Math.max(1, parseInt(getConfig().get('checkInterval')) || 1);
+                const newIntervalMs = newIntervalDays * 24 * 60 * 60 * 1000;
+                checkInterval = setInterval(checkForUpdates, newIntervalMs);
+            }
+        }
+    });
+    
+    context.subscriptions.push(configListener);
+
+    checkForUpdates().catch((err) => {
+        console.error('Initial update check failed:', err);
+        updateStatusBar('error');
+    });
+}
+
+function deactivate() {
+    if (checkInterval) {
+        clearInterval(checkInterval);
+    }
+    if (statusBarItem) {
+        statusBarItem.dispose();
+    }
+}
+
+module.exports = {
+    activate,
+    deactivate,
+    extractVersion,
+    getPlatformSuffix,
+    validateInstallPath,
+    normalizeVersion,
+    getDownloadUrl,
+};

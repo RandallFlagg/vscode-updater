@@ -1,0 +1,110 @@
+{
+  "name": "vscode-updater",
+  "displayName": "VSCode Updater",
+  "publisher": "RandallFlagg",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RandallFlagg/vscode-updater.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RandallFlagg/vscode-updater/issues"
+  },
+  "homepage": "https://github.com/RandallFlagg/vscode-updater",
+  "description": "Automatically update VS Code on Linux",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.97.0",
+    "linux": "*"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "files": [
+    "extension.js",
+    "package.json",
+    "README.md",
+    "STACK.md"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscode-updater.update",
+        "title": "Update VSCode"
+      },
+      {
+        "command": "vscode-updater.restart",
+        "title": "Restart VSCode"
+      },
+      {
+        "command": "vscode-updater.checkNow",
+        "title": "Check for VSCode Updates"
+      }
+    ],
+    "configuration": {
+      "title": "VSCode Updater",
+      "properties": {
+        "vscode-updater.installPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom installation directory for VS Code. Leave empty to auto-detect."
+        },
+        "vscode-updater.autoBackup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically backup the current installation before updating."
+        },
+        "vscode-updater.checkInterval": {
+          "type": "number",
+          "default": 1,
+          "description": "How often to check for updates in days (default: 1)."
+        },
+        "vscode-updater.channel": {
+          "type": "string",
+          "enum": ["stable", "insider", "beta"],
+          "default": "stable",
+          "description": "VS Code release channel to check and download."
+        },
+        "vscode-updater.flavour": {
+          "type": "string",
+          "enum": ["vscode", "codium", "other"],
+          "default": "vscode",
+          "description": "VS Code flavour. Use 'other' to provide custom update and test URLs."
+        },
+        "vscode-updater.customUpdateBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for update downloads when flavour is 'other'. Example: https://update.example.com"
+        },
+        "vscode-updater.customReleasesUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Full URL for releases list when flavour is 'other'. Example: https://update.example.com/api/releases/stable"
+        },
+        "vscode-updater.customBinaryName": {
+          "type": "string",
+          "default": "",
+          "description": "Binary name to restart when flavour is 'other'. Leave empty to use 'code'."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "pnpm run lint",
+    "test": "mocha test/extension.test.js",
+    "test:integration": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.97.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "eslint": "^9.21.0",
+    "mocha": "^10.0.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1"
+  }
+}
