@@ -1,4 +1,5 @@
 const configStore = {};
+const globalStateStore = {};
 
 module.exports = {
     version: '1.133.0',
@@ -31,12 +32,24 @@ module.exports = {
             dispose: () => {},
         }),
     },
+    globalState: {
+        get: (key) => Promise.resolve(globalStateStore[key]),
+        update: (key, value) => {
+            globalStateStore[key] = value;
+            return Promise.resolve();
+        },
+    },
     __setConfig: (key, value) => {
         configStore[key] = value;
     },
     __clearConfig: () => {
         for (const key in configStore) {
             delete configStore[key];
+        }
+    },
+    __clearGlobalState: () => {
+        for (const key in globalStateStore) {
+            delete globalStateStore[key];
         }
     },
 };

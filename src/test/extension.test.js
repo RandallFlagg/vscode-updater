@@ -607,4 +607,143 @@ describe('checkForUpdates', () => {
 
         vscode.__clearConfig();
     });
+
+    it('persists last check timestamp to globalState', async () => {
+        vscode.__clearConfig();
+        vscode.__clearGlobalState();
+        vscode.__setConfig('flavour', 'vscode');
+        vscode.__setConfig('channel', 'stable');
+        extension._setGlobalState(vscode.globalState);
+
+        await withMockHttps([
+            createMockResponse(200, {}, '["1.134.0"]')
+        ], async () => {
+            extension.resolveUrls();
+            await extension.checkForUpdates({
+                updateAvailable: false,
+                latestVersion: null,
+                lastNotifiedVersion: null
+            });
+        });
+
+        const stored = await vscode.globalState.get(extension.LAST_CHECK_KEY);
+        assert.ok(stored, 'globalState should have last check timestamp');
+        assert.strictEqual(typeof stored, 'number', 'timestamp should be a number');
+        assert.ok(Date.now() - stored < 5000, 'timestamp should be recent');
+
+        vscode.__clearConfig();
+        vscode.__clearGlobalState();
+    });
+
+    it('caps check interval to 32-bit signed integer max', () => {
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+        const MAX_SAFE_TIMEOUT = 2147483647;
+        const capped = Math.min(thirtyDaysMs, MAX_SAFE_TIMEOUT);
+        assert.strictEqual(capped, MAX_SAFE_TIMEOUT, '30-day interval should be capped to INT_MAX');
+    });
+
+    it('getEnabled returns true by default', () => {
+        vscode.__clearConfig();
+        extension._setGlobalState(vscode.globalState);
+        assert.strictEqual(extension.getEnabled(), true);
+    });
+
+    it('getEnabled returns false when disabled', () => {
+        vscode.__clearConfig();
+        vscode.__setConfig('enabled', false);
+        extension._setGlobalState(vscode.globalState);
+        assert.strictEqual(extension.getEnabled(), false);
+        vscode.__clearConfig();
+    });
+
+    it('getCheckOnStartup returns true by default', () => {
+        vscode.__clearConfig();
+        extension._setGlobalState(vscode.globalState);
+        assert.strictEqual(extension.getCheckOnStartup(), true);
+    });
+
+    it('getCheckOnStartup returns false when disabled', () => {
+        vscode.__clearConfig();
+        vscode.__setConfig('checkOnStartup', false);
+        extension._setGlobalState(vscode.globalState);
+        assert.strictEqual(extension.getCheckOnStartup(), false);
+        vscode.__clearConfig();
+    });
+
+    it('skips notification when enabled is false', async () => {
+        vscode.__clearConfig();
+        vscode.__clearGlobalState();
+        vscode.__setConfig('flavour', 'vscode');
+        vscode.__setConfig('channel', 'stable');
+        vscode.__setConfig('enabled', false);
+        extension._setGlobalState(vscode.globalState);
+
+        const originalShowInformationMessage = vscode.window.showInformationMessage;
+        let notificationShown = false;
+        vscode.window.showInformationMessage = () => {
+            notificationShown = true;
+            return { then: (cb) => cb('Later') };
+        };
+
+        await withMockHttps([
+            createMockResponse(200, {}, '["1.134.0"]')
+        ], async () => {
+            extension.resolveUrls();
+            await extension.checkForUpdates({
+                updateAvailable: false,
+                latestVersion: null,
+                lastNotifiedVersion: null
+            });
+        });
+
+        assert.strictEqual(notificationShown, false, 'notification should not be shown when disabled');
+
+        vscode.window.showInformationMessage = originalShowInformationMessage;
+        vscode.__clearConfig();
+        vscode.__clearGlobalState();
+    });
+
+    it('validateFileSize retries on zero-byte stat and succeeds', async () => {
+        const fs = require('fs');
+        const path = require('path');
+        const os = require('os');
+        
+        const tmpFile = path.join(os.tmpdir(), 'vscode-updater-test-asar.txt');
+        await fs.promises.writeFile(tmpFile, 'not-empty');
+        
+        let callCount = 0;
+        const originalStat = fs.promises.stat;
+        fs.promises.stat = async (targetPath) => {
+            callCount++;
+            if (targetPath === tmpFile && callCount === 1) {
+                return { size: 0 };
+            }
+            return originalStat(targetPath);
+        };
+
+        const stats = await extension.validateFileSize(tmpFile, 'test asar');
+        assert.strictEqual(stats.size, 9, 'should get real size after retry');
+        assert.strictEqual(callCount, 2, 'should have called stat twice');
+
+        fs.promises.stat = originalStat;
+        await fs.promises.unlink(tmpFile);
+    });
+
+    it('validateFileSize throws after 3 zero-byte attempts', async () => {
+        const fs = require('fs');
+        const path = require('path');
+        const os = require('os');
+        
+        const tmpFile = path.join(os.tmpdir(), 'vscode-updater-test-empty-asar.txt');
+        await fs.promises.writeFile(tmpFile, '');
+        
+        const originalStat = fs.promises.stat;
+        fs.promises.stat = async () => ({ size: 0 });
+
+        const stats = await extension.validateFileSize(tmpFile, 'test empty asar');
+        assert.strictEqual(stats.size, 0, 'should return stats with size 0 after all retries');
+
+        fs.promises.stat = originalStat;
+        await fs.promises.unlink(tmpFile);
+    });
 });

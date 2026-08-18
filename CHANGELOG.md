@@ -6,6 +6,61 @@ All notable changes to the "vscode-updater" extension will be documented in this
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 -->
 
+## [1.3.15] - 2026-08-17
+
+### Fixed
+- `node_modules.asar` validation now retries 3 times over 500ms to avoid false positives from filesystem metadata race condition after `mv`
+- Error handler now removes existing `.BAD` folder before renaming, preventing `ENOTEMPTY` failure that skipped restore
+- Success notification already present: shows "VS Code updated successfully! Please restart to apply changes." with "Restart Now" button
+
+### Added
+- Tests for `validateFileSize` retry behavior
+
+## [1.3.14] - 2026-08-17
+
+### Changed
+- `checkOnStartup` now means "check every time VS Code starts" — no longer gated by `checkInterval` elapsed time
+
+## [1.3.13] - 2026-08-17
+
+### Added
+- `vscode-updater.enabled` setting (default: `true`) — master switch for automatic update checks
+- `vscode-updater.checkOnStartup` setting (default: `true`) — controls whether an update check runs on VS Code startup
+- Tests for `enabled`/`checkOnStartup` behavior and notification suppression
+
+### Changed
+- `checkForUpdates()` now respects `vscode-updater.enabled` — notifications are suppressed when disabled
+- Config listener resets timer when `enabled`, `checkInterval`, or `checkOnStartup` changes
+- Startup check logic now gates on `getEnabled()` and `getCheckOnStartup()`
+
+## [1.3.11] - 2026-08-16
+
+### Added
+- `vscode-updater.tarTimeout` setting (default: 600000 ms = 10 min) to configure tar extraction timeout
+- `vscode-updater.mvTimeout` setting (default: 600000 ms = 10 min) to configure mv operation timeout
+
+### Changed
+- `trace` log level now writes to VS Code Output panel only, no longer calls `console.trace()` to reduce CPU overhead
+- `checkInterval` module variable now tracks the active timeout in the recursive `scheduleNextCheck()` chain, fixing timer leakage on extension reload
+- Removed Windows branch from `restartVSCode()` — extension is Linux-only
+- `showUpdateNotification()` now routes through `vscode-updater.update` command instead of calling `performUpdate()` directly, ensuring the `isUpdating` guard is respected
+
+### Fixed
+- Implemented missing `vscode-updater.autoBackup` setting — `performUpdate()` now conditionally skips backup when set to `false`
+- Removed duplicate `Temp directory created` log line in `performUpdate()`
+- Added `AGENT_OUTPUT/` to `.vscodeignore` to prevent agent artifacts from being packaged
+- Added 10-minute `timeout` to all `execFile` calls (`tar`, `mv`) to prevent indefinite hangs on stalled filesystems
+- Initial `checkForUpdates()` failure now resets `updateAvailable`, `latestVersion`, and `lastNotifiedVersion` to prevent stale state
+
+## [1.3.12] - 2026-08-16
+
+### Fixed
+- Timer interval now persists across VS Code restarts using `globalState`. `checkInterval` measures elapsed time from last successful check, not from VS Code startup
+- Fixed `setTimeout` overflow for intervals > 24.8 days by capping to 32-bit signed integer max (`2147483647` ms)
+
+### Added
+- Tests for globalState timestamp persistence and 32-bit timeout cap
+
 ## [1.3.11] - 2026-08-16
 
 ### Added

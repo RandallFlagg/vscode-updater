@@ -38,7 +38,9 @@ This extension contributes the following settings:
 
 * `vscode-updater.installPath`: Custom installation directory. If not set, the extension automatically detects the running VS Code installation path. Can be any existing directory; critical system paths (`/`, `/usr`, `/home`, `/tmp`) are blocked for safety.
 * `vscode-updater.autoBackup`: Enable or disable automatic backup before updating (default: `true`).
-* `vscode-updater.checkInterval`: How often to check for updates in days (default: `1`).
+* `vscode-updater.enabled`: Master switch for automatic update checks (default: `true`). When `false`, no startup check, periodic checks, or notifications are triggered. The manual `Check for VSCode Updates` command still works.
+* `vscode-updater.checkOnStartup`: Perform an update check when VS Code starts up (default: `true`). Only applies when `vscode-updater.enabled` is `true`.
+* `vscode-updater.checkInterval`: How often to check for updates in days (default: `1`). **Note:** The last check timestamp is persisted across VS Code restarts. When the extension activates, it computes the remaining time from the last check and schedules the next check accordingly. If no previous check exists, it performs an immediate check on startup. Ignored if `vscode-updater.enabled` is `false`.
 * `vscode-updater.channel`: VS Code release channel to check and download. Options: `stable` (default), `insider`.
 * `vscode-updater.flavour`: VS Code flavour. Options: `vscode` (default), `codium`, `other`.
 * `vscode-updater.customUpdateBaseUrl`: Base URL for update downloads when flavour is `other`. Example: `https://update.example.com`

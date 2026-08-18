@@ -140,10 +140,37 @@ let lastNotifiedVersion = null;
 let statusBarHideTimeout = null;
 let isUpdating = false;
 let isChecking = false;
+let globalState;
+
+const LAST_CHECK_KEY = 'vscode-updater.lastCheckTimestamp';
+
+async function validateFileSize(filePath, label, retries = 3, retryDelay = 200) {
+    let stats;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        stats = await fs.promises.stat(filePath);
+        log('trace', `${label} size attempt ${attempt}:`, stats.size, 'bytes');
+        if (stats.size > 0) {
+            return stats;
+        }
+        if (attempt < retries) {
+            log('warn', `${label} size is 0 on attempt ${attempt}, retrying in ${retryDelay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+    }
+    return stats;
+}
 
 function getConfig() {
     log('trace', 'getConfig() called');
     return vscode.workspace.getConfiguration('vscode-updater');
+}
+
+function getEnabled() {
+    return getConfig().get('enabled') !== false;
+}
+
+function getCheckOnStartup() {
+    return getConfig().get('checkOnStartup') !== false;
 }
 
 function resolveUrls() {
@@ -304,7 +331,9 @@ async function checkForUpdates(options = {}) {
                             if (normalizedLatest !== lastNotifiedVersion) {
                                 updateAvailable = true;
                                 lastNotifiedVersion = normalizedLatest;
-                                showUpdateNotification(latestVersion);
+                                if (getEnabled()) {
+                                    showUpdateNotification(latestVersion);
+                                }
                                 updateStatusBar('update');
                             }
                         } else if (normalizedLatest === normalizedCurrent) {
@@ -335,6 +364,9 @@ async function checkForUpdates(options = {}) {
         });
     } finally {
         isChecking = false;
+        if (globalState) {
+            globalState.update(LAST_CHECK_KEY, Date.now()).catch(() => {});
+        }
     }
 }
 
@@ -629,7 +661,7 @@ async function performUpdate() {
             log('trace', 'Validating source asar before move...');
             const sourceAsarPath = path.join(sourceDir, 'resources/app/node_modules.asar');
             if (fs.existsSync(sourceAsarPath)) {
-                const sourceAsarStats = await fs.promises.stat(sourceAsarPath);
+                const sourceAsarStats = await validateFileSize(sourceAsarPath, 'Source asar');
                 log('trace', 'Source asar size:', sourceAsarStats.size, 'bytes');
             }
 
@@ -674,7 +706,7 @@ async function performUpdate() {
             const asarPath = path.join(installPath, 'resources/app/node_modules.asar');
             log('trace', 'asarPath:', asarPath);
             if (fs.existsSync(asarPath)) {
-                const stats = await fs.promises.stat(asarPath);
+                const stats = await validateFileSize(asarPath, 'asar');
                 log('debug', 'asar size:', stats.size, 'bytes');
                 if (stats.size === 0) {
                     log('error', 'node_modules.asar is empty after copy — installation may be corrupted');
@@ -730,6 +762,10 @@ async function performUpdate() {
             try {
                 const badPath = installPath + '.BAD';
                 log('info', 'Keeping failed folder as:', badPath);
+                if (fs.existsSync(badPath)) {
+                    log('debug', 'Removing existing .BAD folder:', badPath);
+                    await cpRm(badPath, { recursive: true, force: true });
+                }
                 await fs.promises.rename(installPath, badPath);
                 vscode.window.showInformationMessage(`Update failed. Kept failed folder as: ${badPath}`);
             } catch (renameError) {
@@ -807,7 +843,21 @@ function activate(context) {
     outputChannel.show(true);
     log('info', 'Extension activating...');
     log('info', 'Log level:', getLogLevel());
+    log('trace', 'Effective configuration:', {
+        enabled: getConfig().get('enabled'),
+        checkOnStartup: getConfig().get('checkOnStartup'),
+        checkInterval: getConfig().get('checkInterval'),
+        logLevel: getConfig().get('logLevel'),
+        flavour: getConfig().get('flavour'),
+        channel: getConfig().get('channel'),
+        installPath: getConfig().get('installPath'),
+        autoBackup: getConfig().get('autoBackup'),
+        tempDir: getConfig().get('tempDir'),
+        tarTimeout: getConfig().get('tarTimeout'),
+        mvTimeout: getConfig().get('mvTimeout'),
+    });
     resolveUrls();
+    globalState = context.globalState;
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     context.subscriptions.push(statusBarItem);
@@ -868,11 +918,17 @@ function activate(context) {
     context.subscriptions.push(updateCommand, restartCommand, checkNowCommand);
 
     let checkTimeout;
-    function scheduleNextCheck() {
+    function scheduleNextCheck(overrideDelay) {
         const checkIntervalDays = Math.max(1, parseInt(getConfig().get('checkInterval')) || 1);
         log('info', 'Check interval set to:', checkIntervalDays, 'days');
-        const checkIntervalMs = checkIntervalDays * 24 * 60 * 60 * 1000;
+        const rawIntervalMs = checkIntervalDays * 24 * 60 * 60 * 1000;
+        const MAX_SAFE_TIMEOUT = 2147483647;
+        const checkIntervalMs = Math.min(rawIntervalMs, MAX_SAFE_TIMEOUT);
+        if (checkIntervalMs !== rawIntervalMs) {
+            log('warn', 'Interval exceeds max safe timeout, capping to ~24.8 days');
+        }
         clearTimeout(checkInterval);
+        const delay = overrideDelay !== undefined ? overrideDelay : checkIntervalMs;
         checkInterval = setTimeout(async () => {
             log('trace', 'Periodic update check triggered');
             await checkForUpdates().catch((err) => {
@@ -880,20 +936,71 @@ function activate(context) {
                 updateStatusBar('error');
             });
             scheduleNextCheck();
-        }, checkIntervalMs);
+        }, delay);
     }
     clearTimeout(checkTimeout);
-    scheduleNextCheck();
+
+    if (getEnabled()) {
+        (async () => {
+            const lastCheckTimestamp = await globalState.get(LAST_CHECK_KEY).catch(() => null);
+            const checkIntervalDays = Math.max(1, parseInt(getConfig().get('checkInterval')) || 1);
+            const rawIntervalMs = checkIntervalDays * 24 * 60 * 60 * 1000;
+            const MAX_SAFE_TIMEOUT = 2147483647;
+            const checkIntervalMs = Math.min(rawIntervalMs, MAX_SAFE_TIMEOUT);
+            
+            if (getCheckOnStartup()) {
+                log('info', 'checkOnStartup enabled, performing initial update check...');
+                checkForUpdates().catch((err) => {
+                    log('error', 'Initial update check failed:', err);
+                    updateAvailable = false;
+                    latestVersion = null;
+                    lastNotifiedVersion = null;
+                    updateStatusBar('error');
+                });
+            } else if (lastCheckTimestamp) {
+                const elapsed = Date.now() - lastCheckTimestamp;
+                const remaining = checkIntervalMs - elapsed;
+                if (remaining > 0) {
+                    log('info', `Last check was ${Math.round(elapsed / 1000 / 60)} minutes ago, next check in ${Math.round(remaining / 1000 / 60)} minutes`);
+                    scheduleNextCheck(remaining);
+                } else {
+                    log('info', 'Last check was older than interval, running initial check');
+                    checkForUpdates().catch((err) => {
+                        log('error', 'Initial update check failed:', err);
+                        updateAvailable = false;
+                        latestVersion = null;
+                        lastNotifiedVersion = null;
+                        updateStatusBar('error');
+                    });
+                    scheduleNextCheck();
+                }
+            } else {
+                log('info', 'No previous check timestamp, performing initial update check...');
+                checkForUpdates().catch((err) => {
+                    log('error', 'Initial update check failed:', err);
+                    updateAvailable = false;
+                    latestVersion = null;
+                    lastNotifiedVersion = null;
+                    updateStatusBar('error');
+                });
+                scheduleNextCheck();
+            }
+        })();
+    } else {
+        log('info', 'Extension is disabled, skipping automatic checks');
+    }
 
     const configListener = vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration('vscode-updater')) {
             log('debug', 'Configuration changed, affected keys:', event.affectsConfiguration('vscode-updater.checkInterval') ? ['checkInterval'] : ['other']);
             resolveUrls();
             
-            if (event.affectsConfiguration('vscode-updater.checkInterval')) {
-                log('info', 'checkInterval changed, resetting timer');
+            if (event.affectsConfiguration('vscode-updater.checkInterval') || event.affectsConfiguration('vscode-updater.enabled') || event.affectsConfiguration('vscode-updater.checkOnStartup')) {
+                log('info', 'checkInterval/enabled/checkOnStartup changed, resetting timer');
                 clearTimeout(checkTimeout);
-                scheduleNextCheck();
+                if (getEnabled()) {
+                    scheduleNextCheck();
+                }
             }
         }
     });
@@ -908,15 +1015,6 @@ function activate(context) {
         }
     });
     context.subscriptions.push(logLevelListener);
-
-    log('info', 'Performing initial update check...');
-    checkForUpdates().catch((err) => {
-        log('error', 'Initial update check failed:', err);
-        updateAvailable = false;
-        latestVersion = null;
-        lastNotifiedVersion = null;
-        updateStatusBar('error');
-    });
 }
 
 function deactivate() {
@@ -952,4 +1050,9 @@ module.exports = {
     showUpdateNotification,
     followRedirects,
     checkForUpdates,
+    LAST_CHECK_KEY,
+    _setGlobalState: (gs) => { globalState = gs; },
+    getEnabled,
+    getCheckOnStartup,
+    validateFileSize,
 };
