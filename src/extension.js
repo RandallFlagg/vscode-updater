@@ -563,6 +563,13 @@ function restartVSCode() {
         log('info', 'Killed old process group:', oldParentPid);
     } catch (err) {
         log('error', 'Failed to kill old process group:', err);
+        if (err.code === 'ESRCH') {
+            log('info', 'Parent already dead, spawning new instance');
+            spawn(process.execPath, [], {
+                detached: true,
+                stdio: 'ignore'
+            }).unref();
+        }
     }
 }
 

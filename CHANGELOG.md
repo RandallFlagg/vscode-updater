@@ -6,12 +6,21 @@ All notable changes to the "vscode-updater" extension will be documented in this
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 -->
 
+## [1.4.1] - 2026-08-18
+
+### Fixed
+- `restartVSCode()` now falls back to spawning a new instance when the old parent process is already dead (ESRCH)
+- Restored `debug.deleteDownloadedArchive` setting with actual behavior: deletes cached archive when `true`, keeps when `false`
+
+### Added
+- Roadmap section to README linking to pending Phase 2 issues
+
 ## [1.4.0] - 2026-08-18
 
 ### Changed
 - Refactored `performUpdate()` to extract directly to `installPath` instead of extracting to temp then moving
 - Backup now uses timestamped suffix (`installPath.OLD.<timestamp>`) instead of fixed `.OLD`, eliminating `ENOTEMPTY` errors on subsequent updates
-- `restartVSCode()` simplified: only kills old process group, no spawn (automatic restart not yet working)
+- `restartVSCode()` now falls back to spawning a new instance when the old parent process is already dead (ESRCH)
 - Removed redundant debug archive copy — cache itself is preserved when `debug.deleteDownloadedArchive` is `false`
 
 ### Fixed

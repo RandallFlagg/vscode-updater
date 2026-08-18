@@ -47,3 +47,21 @@ NOT IMPLEMENTED
 - Accepts that automatic restart is not possible from an extension and requires manual restart
 
 **Status:** NOT IMPLEMENTED — requires architectural decision
+
+---
+
+## Install Path Scenarios
+
+### 1. Non-empty parent folder with default exe folder name
+
+**Scenario:** User sets `installPath` to `/home/void/Programs/myvscode`, where `myvscode` is not empty and contains the default `VSCode-linux-x64` folder. The extension currently expects `installPath` to be the folder that contains the executable directly, or a parent that is otherwise empty/clean.
+
+**Question:** Should the extension support this layout, or should it require `installPath` to point directly to the `VSCode-linux-x64` folder?
+
+### 2. Custom exe folder name
+
+**Scenario:** User uses a different name for the executable folder, e.g., `/home/void/Programs/myvscode` where the binary is directly in `myvscode/` instead of `myvscode/VSCode-linux-x64/`. The extension currently hardcodes expectations about the `VSCode-linux-x64` subfolder structure.
+
+**Question:** Should the extension detect and adapt to custom folder names, or is `VSCode-linux-x64` a fixed requirement?
+
+**Status:** NOT IMPLEMENTED — needs design decision

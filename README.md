@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./icon.png" alt="Project Logo" width="128" height="128">
+  <img src="./images/icon.png" alt="Project Logo" width="128" height="128">
 </p>
 
 # VSCode Updater
@@ -133,3 +133,10 @@ Run tests with:
 
 **Update button still shows in VS Code**
 - This is expected. This extension cannot suppress VS Code's built-in update notification. Use the extension's status bar or command palette instead.
+
+## Roadmap
+
+- [Config Listener Elapsed-Time Issue](MISC/PHASE2.md#config-listener-elapsed-time-issue) — Changing `checkInterval` mid-session ignores elapsed time since last check
+- [Missing installPath Handling](MISC/PHASE2.md#missing-installpath-handling) — `performUpdate()` throws `ENOENT` if `installPath` doesn't exist; no auto-create
+- [Restart Feature — Not Working](MISC/PHASE2.md#restart-feature--not-working) — Automatic restart after binary update not yet implemented
+- [Install Path Scenarios](MISC/PHASE2.md#install-path-scenarios) — Support for non-empty parent folders and custom executable folder names
